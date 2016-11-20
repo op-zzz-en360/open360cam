@@ -37,6 +37,7 @@ using Microsoft.WindowsAzure.Storage;
 using Microsoft.WindowsAzure.Storage.Blob;
 using System.Text;
 using Microsoft.WindowsAzure.Storage.Auth;
+using Windows.UI.Xaml.Media;
 
 namespace open360cam
 {
@@ -49,7 +50,6 @@ namespace open360cam
         private Image[] cameraImageArray = new Image[2];
         private MediaCapture[] mediaCaptureArray = new MediaCapture[2];
         private bool[] isPreviewingArray = new bool[2];
-        private bool isRecording;
 
         #region HELPER_FUNCTIONS
 
@@ -58,6 +58,24 @@ namespace open360cam
             ENABLE,
             DISABLE
         }
+
+        private void WriteLog(string message)
+        {
+            status.Text += "\n " + message;
+        }
+
+        private void TextBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            var grid = (Grid)VisualTreeHelper.GetChild(status, 0);
+            for (var i = 0; i <= VisualTreeHelper.GetChildrenCount(grid) - 1; i++)
+            {
+                object obj = VisualTreeHelper.GetChild(grid, i);
+                if (!(obj is ScrollViewer)) continue;
+                ((ScrollViewer)obj).ChangeView(0.0f, ((ScrollViewer)obj).ExtentHeight, 1.0f);
+                break;
+            }
+        }
+
         /// <summary>
         /// Helper function to enable or disable Initialization buttons
         /// </summary>
@@ -92,9 +110,7 @@ namespace open360cam
             }
         }
 
-        public async 
-        Task
-        GetVideoProfileSupportedDeviceIdAsync()
+        public async Task InitDevices()
         {
 
             // Finds all video capture devices
@@ -107,9 +123,9 @@ namespace open360cam
             var selectedPreviewResolution = mediaCaptureArray[0].VideoDeviceController.GetAvailableMediaStreamProperties(MediaStreamType.VideoPreview).ElementAt(4);
             
             await mediaCaptureArray[0].VideoDeviceController.SetMediaStreamPropertiesAsync(MediaStreamType.VideoPreview, selectedPreviewResolution);
-            
+
             // Set callbacks for failure and recording limit exceeded
-            status.Text += "\nDevice successfully initialized for video recording!";
+            WriteLog("Device " + 0 + " successfully initialized!");
             mediaCaptureArray[0].Failed += new MediaCaptureFailedEventHandler(mediaCapture_Failed);
             mediaCaptureArray[0].RecordLimitationExceeded += new Windows.Media.Capture.RecordLimitationExceededEventHandler(mediaCapture_RecordLimitExceeded);
 
@@ -130,7 +146,7 @@ namespace open360cam
             await mediaCaptureArray[1].VideoDeviceController.SetMediaStreamPropertiesAsync(MediaStreamType.VideoPreview, selectedPreviewResolution2);
 
             // Set callbacks for failure and recording limit exceeded
-            status.Text += "\nDevice successfully initialized for video recording!";
+            WriteLog("Device " + 1 + " successfully initialized!");
             mediaCaptureArray[1].Failed += new MediaCaptureFailedEventHandler(mediaCapture_Failed);
             mediaCaptureArray[1].RecordLimitationExceeded += new Windows.Media.Capture.RecordLimitationExceededEventHandler(mediaCapture_RecordLimitExceeded);
 
@@ -149,8 +165,7 @@ namespace open360cam
             cameraImageArray[1] = captureImage2;
             SetInitButtonVisibility(Action.ENABLE);
             SetVideoButtonVisibility(Action.DISABLE);
-
-            isRecording = false;
+            
             isPreviewingArray[0] = false;
             isPreviewingArray[1] = false;
         }        
@@ -159,7 +174,6 @@ namespace open360cam
         {
             if (mediaCaptureArray[0] != null)
             {
-                // Cleanup MediaCapture object
                 if (isPreviewingArray[0])
                 {
                     await mediaCaptureArray[0].StopPreviewAsync();
@@ -171,7 +185,6 @@ namespace open360cam
             }
             if (mediaCaptureArray[1] != null)
             {
-                // Cleanup MediaCapture object
                 if (isPreviewingArray[1])
                 {
                     await mediaCaptureArray[1].StopPreviewAsync();
@@ -189,10 +202,7 @@ namespace open360cam
         /// 'Initialize Audio and Video' button action function
         /// Dispose existing MediaCapture object and set it up for audio and video
         /// Enable or disable appropriate buttons
-        /// - DISABLE 'Initialize Audio and Video' 
-        /// - DISABLE 'Start Audio Record'
-        /// - ENABLE 'Initialize Audio Only'
-        /// - ENABLE 'Start Video Record'
+        /// - DISABLE 'Initialize Camera'
         /// - ENABLE 'Take Photo'
         /// </summary>
         /// <param name="sender"></param>
@@ -209,18 +219,17 @@ namespace open360cam
             try
             {
                 Cleanup();
-
-                status.Text += "\nInitializing camera to capture audio and video...";
+                WriteLog("Initializing camera to capture audio and video...");
                 
-                await GetVideoProfileSupportedDeviceIdAsync();
-                status.Text += "\nCamera preview succeeded";
+                await InitDevices();
+                WriteLog("Camera preview succeeded!");
 
                 // Enable buttons for video and photo capture
                 SetVideoButtonVisibility(Action.ENABLE);
             }
             catch (Exception ex)
             {
-                status.Text += "\nUnable to initialize camera for audio/video mode: " + ex.Message;             
+                WriteLog("Unable to initialize camera: " + ex.Message);             
             }
         }
 
@@ -295,50 +304,45 @@ namespace open360cam
         /// </summary>
         /// <param name="sender"></param>
         /// <param name="e"></param>
-        private async void takePhoto_Click(object sender, RoutedEventArgs e)
+        private void takePhoto_Click(object sender, RoutedEventArgs e)
         {
             try
             {
                 takePhoto.IsEnabled = false;
-                cameraImageArray[0].Source = null;
-                cameraImageArray[1].Source = null;
-
-                await mediaCaptureArray[0].StopPreviewAsync();
-                await mediaCaptureArray[1].StopPreviewAsync();
 
                 ImageEncodingProperties imageProperties = ImageEncodingProperties.CreateJpeg();
-
-                status.Text += "\nstart capturing";
 
                 Parallel.ForEach(indexArray, async (currentIndex) =>
                     {
                         await Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.High, async () =>
                              {
+                                 await mediaCaptureArray[currentIndex].StopPreviewAsync();
+                                 cameraImageArray[currentIndex].Source = null;
                                  string PHOTO_FILE_NAME = this.buildDateTimeStamp() + ".jpg";
-                                 status.Text += "\nDevice " + currentIndex + " started capturing photo";
+                                 WriteLog("Device " + currentIndex + " started capturing photo");
                                  StorageFile photoFile = await KnownFolders.PicturesLibrary.CreateFileAsync(
                                                      PHOTO_FILE_NAME, CreationCollisionOption.ReplaceExisting);
-                                 status.Text += "\nDevice " + currentIndex + " created file";
                                  await mediaCaptureArray[currentIndex].CapturePhotoToStorageFileAsync(imageProperties, photoFile);
-                                 status.Text += "\nTake Photo succeeded: " + photoFile.Path;
+                                 WriteLog("Device " + currentIndex + " took photo succesfully: " + photoFile.Path);
                                  IRandomAccessStream photoStream = await photoFile.OpenReadAsync();
                                  BitmapImage bitmap = new BitmapImage();
                                  bitmap.SetSource(photoStream);
                                  cameraImageArray[currentIndex].Source = bitmap;
 
                                  await mediaCaptureArray[currentIndex].StartPreviewAsync();
-
+                                 WriteLog("Device " + currentIndex + " started upload");
                                  CloudBlockBlob blockBlob = App.container.GetBlockBlobReference(PHOTO_FILE_NAME);
                                  await blockBlob.DeleteIfExistsAsync();
                                  await blockBlob.UploadFromFileAsync(photoFile);
+                                 WriteLog("Device " + currentIndex + " finished upload successfully!");
                              });
                     });
-              
+                
                 takePhoto.IsEnabled = true;
             }
             catch (Exception ex)
             {
-                status.Text += ex.ToString();
+                WriteLog(ex.Message);
                 Cleanup();
             }
             finally
@@ -354,28 +358,11 @@ namespace open360cam
         /// <param name="currentFailure"></param>
         private async void mediaCapture_Failed(MediaCapture currentCaptureObject, MediaCaptureFailedEventArgs currentFailure)
         {
-            await Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, async () =>
+            await Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () =>
             {
-                try
-                {
-                    status.Text += "\nMediaCaptureFailed: " + currentFailure.Message;
-
-                    if (isRecording)
-                    {
-                        await mediaCaptureArray[0].StopRecordAsync();
-                        await mediaCaptureArray[1].StopRecordAsync();
-                        status.Text += "\n Recording Stopped";
-                    }
-                }
-                catch (Exception)
-                {
-                }
-                finally
-                {
-                    SetInitButtonVisibility(Action.DISABLE);
-                    SetVideoButtonVisibility(Action.DISABLE);
-                    status.Text += "\nCheck if camera is diconnected. Try re-launching the app";                    
-                }
+                SetInitButtonVisibility(Action.DISABLE);
+                SetVideoButtonVisibility(Action.DISABLE);
+                WriteLog("Check if camera is diconnected. Try re-launching the app");
             });            
         }
 
@@ -383,31 +370,15 @@ namespace open360cam
         /// Callback function if Recording Limit Exceeded
         /// </summary>
         /// <param name="currentCaptureObject"></param>
-        public async void mediaCapture_RecordLimitExceeded(Windows.Media.Capture.MediaCapture currentCaptureObject)
+        public void mediaCapture_RecordLimitExceeded(Windows.Media.Capture.MediaCapture currentCaptureObject)
         {
             try
             {
-                if (isRecording)
-                {
-                    await Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, async () =>
-                    {
-                        try
-                        {
-                            status.Text += "\nStopping Record on exceeding max record duration";
-                            await mediaCaptureArray[0].StopRecordAsync();
-                            await mediaCaptureArray[1].StopRecordAsync();
-                            isRecording = false;
-                        }
-                        catch (Exception e)
-                        {
-                            status.Text += e.Message;
-                        }
-                    });
-                }
+                //TODO: handle record limit exceeded error
             }
-            catch (Exception e)
+            catch (Exception ex)
             {
-                status.Text += e.Message;
+                WriteLog(ex.Message);
             }
         }
     }
